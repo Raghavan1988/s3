@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#5f6368"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="960" height="720" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="480" y="34" text-anchor="middle" font-size="21" font-weight="700" fill="#202124">local-s3 — System Design</text>
+  <text x="480" y="56" text-anchor="middle" font-size="12.5" fill="#5f6368">An S3-compatible object store: an HTTP / XML API over a split metadata + data plane</text>
+
+  <!-- Client -->
+  <rect x="345" y="78" width="270" height="56" rx="8" fill="#e8f0fe" stroke="#1a73e8" stroke-width="1.5"/>
+  <text x="480" y="102" text-anchor="middle" font-size="14" font-weight="600" fill="#202124">AWS CLI / boto3  (the real SDK)</text>
+  <text x="480" y="120" text-anchor="middle" font-size="11.5" fill="#5f6368">HTTP requests, path-style addressing</text>
+
+  <!-- Client -> Front-end -->
+  <line x1="480" y1="134" x2="480" y2="176" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="492" y="160" font-size="11" fill="#5f6368">HTTP  ·  XML responses</text>
+
+  <!-- Front-end -->
+  <rect x="120" y="178" width="720" height="158" rx="8" fill="#fef7e0" stroke="#f9ab00" stroke-width="1.5"/>
+  <text x="480" y="200" text-anchor="middle" font-size="14" font-weight="700" fill="#202124">FastAPI front-end  —  stateless request router</text>
+
+  <text x="150" y="226" font-size="12" font-weight="600" fill="#202124">Buckets</text>
+  <text x="150" y="246" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">GET  /                    list buckets</text>
+  <text x="150" y="264" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">PUT  /{bucket}            create bucket</text>
+  <text x="150" y="282" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">HEAD /{bucket}            exists?</text>
+  <text x="150" y="300" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">DEL  /{bucket}            delete (if empty)</text>
+
+  <text x="510" y="226" font-size="12" font-weight="600" fill="#202124">Objects</text>
+  <text x="510" y="246" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">PUT  /{bucket}/{key}      upload</text>
+  <text x="510" y="264" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">GET  /{bucket}/{key}      download</text>
+  <text x="510" y="282" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">HEAD /{bucket}/{key}      metadata only</text>
+  <text x="510" y="300" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">DEL  /{bucket}/{key}      delete</text>
+
+  <text x="480" y="324" text-anchor="middle" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">GET /{bucket}?prefix=&amp;delimiter=  → list objects   ·   errors as &lt;Error&gt;&lt;Code&gt; XML</text>
+
+  <!-- Front-end -> planes -->
+  <line x1="340" y1="336" x2="300" y2="396" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="150" y="372" font-size="11" fill="#5f6368">look up / commit index</text>
+  <line x1="620" y1="336" x2="660" y2="396" stroke="#5f6368" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="648" y="372" font-size="11" fill="#5f6368">store / fetch bytes</text>
+
+  <!-- Metadata plane -->
+  <rect x="110" y="398" width="360" height="196" rx="8" fill="#e6f4ea" stroke="#188038" stroke-width="1.5"/>
+  <text x="290" y="420" text-anchor="middle" font-size="13.5" font-weight="700" fill="#202124">METADATA PLANE — SQLite index</text>
+  <text x="128" y="446" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">buckets( name PK, created_at )</text>
+  <text x="128" y="468" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">objects(</text>
+  <text x="148" y="486" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">(bucket, key)  PK   ← shard key</text>
+  <text x="148" y="504" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">blob_id  → pointer to data plane</text>
+  <text x="148" y="522" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">size, etag(md5), content_type,</text>
+  <text x="148" y="540" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">last_modified )</text>
+  <text x="128" y="566" font-size="10.5" fill="#5f6368">small · consistent · touched on every request</text>
+  <text x="128" y="582" font-size="10.5" fill="#5f6368">LIST reads ONLY this plane — never object bytes</text>
+
+  <!-- Data plane -->
+  <rect x="500" y="398" width="350" height="196" rx="8" fill="#fce8e6" stroke="#d93025" stroke-width="1.5"/>
+  <text x="675" y="420" text-anchor="middle" font-size="13.5" font-weight="700" fill="#202124">DATA PLANE — blob store (files)</text>
+  <text x="518" y="446" font-size="11.5" fill="#3c4043" font-family="Menlo, Consolas, monospace">blobs/&lt;uuid&gt;  =  raw bytes</text>
+  <text x="518" y="470" font-size="11.5" fill="#3c4043">• no bucket/key here → flat namespace</text>
+  <text x="518" y="490" font-size="11.5" fill="#3c4043">• "folders" are only a listing-time view</text>
+  <text x="518" y="510" font-size="11.5" fill="#3c4043">• write: tmp → fsync → atomic rename</text>
+  <text x="518" y="530" font-size="11.5" fill="#3c4043">• ETag = MD5(bytes)</text>
+  <text x="518" y="566" font-size="10.5" fill="#5f6368">big · dumb bag of bytes</text>
+  <text x="518" y="582" font-size="10.5" fill="#5f6368">where replication / erasure-coding would live</text>
+
+  <!-- PUT flow -->
+  <rect x="110" y="614" width="360" height="86" rx="8" fill="#f1f3f4" stroke="#9aa0a6" stroke-width="1.2"/>
+  <text x="128" y="636" font-size="12" font-weight="700" fill="#202124">PUT flow (write order matters)</text>
+  <text x="128" y="656" font-size="11" fill="#3c4043">1) write bytes (data)  →  2) commit index row</text>
+  <text x="128" y="672" font-size="11" fill="#3c4043">(metadata)  →  3) GC the superseded blob</text>
+  <text x="128" y="690" font-size="10.5" fill="#5f6368">crash between 1 &amp; 2 ⇒ orphan blob (garbage), never a dangling row</text>
+
+  <!-- GET flow -->
+  <rect x="500" y="614" width="350" height="86" rx="8" fill="#f1f3f4" stroke="#9aa0a6" stroke-width="1.2"/>
+  <text x="518" y="636" font-size="12" font-weight="700" fill="#202124">GET flow</text>
+  <text x="518" y="656" font-size="11" fill="#3c4043">1) look up (bucket, key) in the index</text>
+  <text x="518" y="672" font-size="11" fill="#3c4043">2) stream the bytes from the blob store</text>
+  <text x="518" y="690" font-size="10.5" fill="#5f6368">HEAD = step 1 only (headers, no body)</text>
+</svg>
