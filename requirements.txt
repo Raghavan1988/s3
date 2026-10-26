@@ -1,0 +1,5 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+# dev / testing — boto3 is the *real* AWS SDK; we point it at our server
+boto3==1.35.90
+pytest==8.3.4
