@@ -1,0 +1,10 @@
+# Python virtual environment — regenerated per machine, never committed
+.venv/
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# local object-store data (created later, in the build)
+.s3data/
