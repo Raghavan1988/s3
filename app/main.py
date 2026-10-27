@@ -186,3 +186,29 @@ async def head_object(bucket: str, key: str) -> Response:
             "Last-Modified": _http_date(rec.last_modified),
         },
     )
+
+
+@app.delete("/{bucket}/{key:path}")
+async def delete_object(bucket: str, key: str) -> Response:
+    # DELETE /{bucket}/{key} -> remove an object.
+    #   1) drop the index row first (object becomes invisible). delete_object
+    #      hands back the orphaned blob_id, or None if the key wasn't there.
+    orphan_blob_id = meta.delete_object(bucket, key)
+    #   2) GC the bytes. If None, delete_object was a no-op -- fine.
+    if orphan_blob_id:
+        blobs.delete(orphan_blob_id)
+    # S3 returns 204 No Content whether or not the key existed -> idempotent.
+    return Response(status_code=204)
+
+
+@app.delete("/{bucket}")
+async def delete_bucket(bucket: str) -> Response:
+    # DELETE /{bucket} -> remove a bucket, but only if it's empty.
+    if not meta.bucket_exists(bucket):
+        # (Proper <Error> XML in Step 9; bare status for now.)
+        return Response(status_code=404, content="NoSuchBucket")
+    if meta.bucket_object_count(bucket) > 0:
+        # Guardrail: refuse to delete a bucket that still holds objects.
+        return Response(status_code=409, content="BucketNotEmpty")
+    meta.delete_bucket(bucket)
+    return Response(status_code=204)
