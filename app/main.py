@@ -15,6 +15,8 @@ This step serves BUCKETS only: create one, and list them all as S3 XML.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
+from email.utils import format_datetime   # formats a datetime as an RFC-1123 HTTP date
 from xml.sax.saxutils import escape   # escapes &, <, > so names can't break our XML
 
 from fastapi import FastAPI, Request    # Request lets us read the raw body + headers
@@ -44,6 +46,15 @@ app = FastAPI(title="local-s3")
 
 # The XML namespace every S3 response document declares. The SDKs check for it.
 S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+
+def _http_date(iso: str) -> str:
+    # Convert our STORED ISO-8601 timestamp ("2026-10-27T05:22:55.000Z") into the
+    # HTTP-date format required by the Last-Modified header
+    # ("Tue, 27 Oct 2026 05:22:55 GMT"). Crucially we format the object's *stored*
+    # time -- NOT datetime.now() -- so repeated GETs report the real write time.
+    dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S.000Z").replace(tzinfo=timezone.utc)
+    return format_datetime(dt, usegmt=True)
 
 
 def _list_all_buckets_xml(rows) -> str:
@@ -127,3 +138,51 @@ async def put_object(bucket: str, key: str, request: Request) -> Response:
 
     # S3 returns 200 with the ETag header (quoted) on a successful PUT.
     return Response(status_code=200, headers={"ETag": f'"{etag}"'})
+
+
+@app.get("/{bucket}/{key:path}")
+async def get_object(bucket: str, key: str) -> Response:
+    # GET /{bucket}/{key} -> download an object. The two-step read flow:
+    #   step 1: metadata lookup
+    rec = meta.get_object(bucket, key)
+    if rec is None:
+        # Nothing in the index -> the object doesn't exist. We never touch the
+        # data plane. (Proper <Error> XML with NoSuchKey comes in Step 9.)
+        return Response(status_code=404, content="NoSuchKey")
+
+    #   step 2: fetch the bytes from the data plane using the pointer we found
+    data = blobs.get(rec.blob_id)
+
+    # Return the bytes with the S3-correct headers. Content-Length is set
+    # automatically from the body length; we supply the rest.
+    return Response(
+        content=data,
+        media_type=rec.content_type,                # becomes the Content-Type header
+        headers={
+            "ETag": f'"{rec.etag}"',                # MD5, quoted
+            "Last-Modified": _http_date(rec.last_modified),  # from the STORED time
+        },
+    )
+
+
+@app.head("/{bucket}/{key:path}")
+async def head_object(bucket: str, key: str) -> Response:
+    # HEAD /{bucket}/{key} -> same as GET but headers only, no body. Step 1 only:
+    # a pure metadata-plane call, so it's cheap no matter how big the object is.
+    rec = meta.get_object(bucket, key)
+    if rec is None:
+        # HEAD responses carry no body, so we can only signal via the status code.
+        return Response(status_code=404)
+
+    # Empty body, but we explicitly set Content-Length to the object's real size
+    # (what a GET *would* return). Because we provide Content-Length ourselves,
+    # the framework won't overwrite it with 0.
+    return Response(
+        status_code=200,
+        headers={
+            "Content-Length": str(rec.size),
+            "Content-Type": rec.content_type,
+            "ETag": f'"{rec.etag}"',
+            "Last-Modified": _http_date(rec.last_modified),
+        },
+    )
