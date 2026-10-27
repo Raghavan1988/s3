@@ -5,6 +5,9 @@ exercise. The goal is for me (the human) to understand every file and every
 design decision — **not** to get a finished product quickly.
 
 `system-design.svg` shows the target architecture for the scope we're building.
+`summary.md` is the running log of what's done and learned so far.
+
+**Current status:** Steps 0–2 complete. Next: Step 3 (metadata plane).
 
 ---
 
@@ -43,12 +46,12 @@ follows from that split.
 Each step = **one concept + one small piece of code + one way to verify it.**
 We tick the box together as we finish each one.
 
-- [ ] **Step 0 — Setup.** Create a virtualenv; install FastAPI + uvicorn (and
+- [x] **Step 0 — Setup.** Create a virtualenv; install FastAPI + uvicorn (and
       boto3 for testing). Lay out the `app/` package. *Concept:* why we isolate
       dependencies instead of installing into the base environment.
-- [ ] **Step 1 — The two planes (concept only).** Understand and sketch the
+- [x] **Step 1 — The two planes (concept only).** Understand and sketch the
       metadata/data split and the interface each side exposes — before any code.
-- [ ] **Step 2 — Data plane (`storage.py`).** A blob store: `put(bytes) → id`,
+- [x] **Step 2 — Data plane (`storage.py`).** A blob store: `put(bytes) → id`,
       `get(id)`, `delete(id)`. *Concepts:* flat namespace, `ETag = MD5(bytes)`,
       atomic write (tmp → fsync → rename). *Verify:* a few lines in a Python shell.
 - [ ] **Step 3 — Metadata plane, buckets (`metadata.py`).** SQLite schema;
