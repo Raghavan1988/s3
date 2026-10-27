@@ -7,7 +7,7 @@ design decision — **not** to get a finished product quickly.
 `system-design.svg` shows the target architecture for the scope we're building.
 `summary.md` is the running log of what's done and learned so far.
 
-**Current status:** Steps 0–2 complete. Next: Step 3 (metadata plane).
+**Current status:** Steps 0–4 complete. Next: Step 5 (PUT object).
 
 ---
 
@@ -54,9 +54,9 @@ We tick the box together as we finish each one.
 - [x] **Step 2 — Data plane (`storage.py`).** A blob store: `put(bytes) → id`,
       `get(id)`, `delete(id)`. *Concepts:* flat namespace, `ETag = MD5(bytes)`,
       atomic write (tmp → fsync → rename). *Verify:* a few lines in a Python shell.
-- [ ] **Step 3 — Metadata plane, buckets (`metadata.py`).** SQLite schema;
+- [x] **Step 3 — Metadata plane, buckets (`metadata.py`).** SQLite schema;
       create and list buckets. *Concept:* the index is the source of truth.
-- [ ] **Step 4 — First HTTP surface (`main.py` + bucket XML).** A FastAPI app
+- [x] **Step 4 — First HTTP surface (`main.py` + bucket XML).** A FastAPI app
       that creates a bucket and lists buckets as S3 XML. *Verify:* `curl`.
 - [ ] **Step 5 — PUT object.** Add the `objects` table and wire both planes.
       *Concept:* write order — bytes first, index row second, then GC the old
