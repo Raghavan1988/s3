@@ -17,10 +17,11 @@ from __future__ import annotations
 import os
 from xml.sax.saxutils import escape   # escapes &, <, > so names can't break our XML
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request    # Request lets us read the raw body + headers
 from fastapi.responses import Response  # lets us return raw bodies + custom content-type
 
-from .metadata import Metadata
+from .metadata import Metadata, ObjectRecord
+from .storage import BlobStore
 
 # Where the metadata database lives. We default to a `.s3data/` folder next to the
 # project (it's git-ignored). An env var lets us override it, e.g. in tests.
@@ -33,6 +34,10 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Instantiate the metadata plane once, at import time. A single long-lived index
 # that every request shares. (The data plane gets added here in Step 5.)
 meta = Metadata(os.path.join(DATA_DIR, "metadata.db"))
+
+# Instantiate the data plane too, rooted in the same folder. Blobs land in
+# <DATA_DIR>/blobs/. Both planes are shared by every request.
+blobs = BlobStore(DATA_DIR)
 
 # The FastAPI application object. Uvicorn looks for this (`app.main:app`) to run.
 app = FastAPI(title="local-s3")
@@ -81,3 +86,44 @@ async def create_bucket(bucket: str) -> Response:
     # pointing at the new bucket.
     meta.create_bucket(bucket)
     return Response(status_code=200, headers={"Location": f"/{bucket}"})
+
+
+@app.put("/{bucket}/{key:path}")
+async def put_object(bucket: str, key: str, request: Request) -> Response:
+    # PUT /{bucket}/{key} -> upload an object.
+    #
+    # The `{key:path}` converter lets the key contain slashes, so a key like
+    # "photos/2024/cat.jpg" is captured whole (not just "photos"). Remember: that
+    # slash is NOT a folder -- the whole string is one flat key.
+
+    # Reject writes to a bucket that doesn't exist. (Proper S3 <Error> XML comes
+    # in Step 9; for now a bare 404 is enough to prove the check works.)
+    if not meta.bucket_exists(bucket):
+        return Response(status_code=404, content="NoSuchBucket")
+
+    # Read the entire request body (the object's bytes) and note its content-type.
+    data = await request.body()
+    content_type = request.headers.get("content-type", "application/octet-stream")
+
+    # ---- THE WRITE ORDER ----------------------------------------------------
+    # 1) DATA PLANE FIRST: store the bytes, get back a blob_id + etag. If we
+    #    crashed after this, these bytes would be an orphan (harmless garbage).
+    blob_id, etag = blobs.put(data)
+
+    # 2) METADATA SECOND: commit the index row pointing at the new blob. THIS is
+    #    the instant the object officially exists. put_object returns the OLD
+    #    blob_id if this was an overwrite.
+    rec = ObjectRecord(
+        bucket=bucket, key=key, blob_id=blob_id, size=len(data),
+        etag=etag, content_type=content_type, last_modified=Metadata.now_iso(),
+    )
+    old_blob_id = meta.put_object(rec)
+
+    # 3) GC LAST: only now that the row points at the NEW blob is it safe to drop
+    #    the OLD one. Doing this earlier could strand a concurrent reader that
+    #    still sees the old row.
+    if old_blob_id:
+        blobs.delete(old_blob_id)
+
+    # S3 returns 200 with the ETag header (quoted) on a successful PUT.
+    return Response(status_code=200, headers={"ETag": f'"{etag}"'})
