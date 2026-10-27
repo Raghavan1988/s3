@@ -202,6 +202,26 @@ class Metadata:
             # points at its new bytes). Hand back the superseded blob_id, if any.
             return old["blob_id"] if old else None
 
+    def get_object(self, bucket: str, key: str) -> ObjectRecord | None:
+        """Look up one object's metadata. Returns the record, or None if absent."""
+        # A plain read -- no lock. SELECT * grabs every column for this (bucket,key).
+        row = self._conn.execute(
+            "SELECT * FROM objects WHERE bucket = ? AND key = ?", (bucket, key)
+        ).fetchone()
+        if row is None:
+            return None  # no such object -> caller turns this into a 404
+        # Repackage the DB row into our ObjectRecord dataclass so the rest of the
+        # app works with a typed object, not a raw sqlite row.
+        return ObjectRecord(
+            bucket=row["bucket"],
+            key=row["key"],
+            blob_id=row["blob_id"],
+            size=row["size"],
+            etag=row["etag"],
+            content_type=row["content_type"],
+            last_modified=row["last_modified"],
+        )
+
     @staticmethod
     def now_iso() -> str:
         # A small public wrapper so other modules can reuse our timestamp format
