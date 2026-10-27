@@ -222,6 +222,35 @@ class Metadata:
             last_modified=row["last_modified"],
         )
 
+    def delete_object(self, bucket: str, key: str) -> str | None:
+        """Delete an object's index row. Returns the now-orphaned blob_id so the
+        caller can reclaim the bytes, or None if the key didn't exist."""
+        # Lock so "read the blob_id, then delete the row" is one atomic unit.
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT blob_id FROM objects WHERE bucket = ? AND key = ?",
+                (bucket, key),
+            ).fetchone()
+            if row is None:
+                return None  # nothing to delete -> caller still returns 204 (idempotent)
+            # Drop the row FIRST. After this commits, the object is gone (a GET
+            # will 404). The blob it pointed at is now an orphan for the caller to GC.
+            self._conn.execute(
+                "DELETE FROM objects WHERE bucket = ? AND key = ?", (bucket, key)
+            )
+            return row["blob_id"]
+
+    def bucket_object_count(self, name: str) -> int:
+        """How many objects a bucket holds. Used to refuse deleting a non-empty one."""
+        return self._conn.execute(
+            "SELECT COUNT(*) AS n FROM objects WHERE bucket = ?", (name,)
+        ).fetchone()["n"]
+
+    def delete_bucket(self, name: str) -> None:
+        """Remove a bucket row. The caller must have already checked it is empty."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM buckets WHERE name = ?", (name,))
+
     @staticmethod
     def now_iso() -> str:
         # A small public wrapper so other modules can reuse our timestamp format
