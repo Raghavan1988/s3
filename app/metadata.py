@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import sqlite3                      # the embedded SQL database in Python's stdlib
 import threading                   # for a lock, since the web server is multi-threaded
+from dataclasses import dataclass  # a tidy container for an object's metadata row
 from datetime import datetime, timezone  # to timestamp bucket creation in UTC
 
 
@@ -28,6 +29,20 @@ def _now_iso() -> str:
     #   datetime.now(timezone.utc) -> current time, timezone-aware, in UTC
     #   strftime(...)              -> format it; we hard-code .000 ms and a 'Z' suffix
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+@dataclass
+class ObjectRecord:
+    # One object's metadata -- everything about it EXCEPT the bytes themselves.
+    # `blob_id` is the pointer into the data plane; the rest is what we report to
+    # clients (size, etag, content-type, when it was last written).
+    bucket: str
+    key: str
+    blob_id: str          # pointer into the data plane (which blob holds the bytes)
+    size: int             # number of bytes
+    etag: str             # MD5 hex of the bytes (stored WITHOUT surrounding quotes)
+    content_type: str     # e.g. "image/jpeg"; what we send back on GET
+    last_modified: str    # ISO-8601 timestamp of this write
 
 
 class Metadata:
@@ -78,6 +93,31 @@ class Metadata:
                 )
                 """
             )
+            # The objects table: one row per stored object.
+            #
+            #   PRIMARY KEY (bucket, key) -> a COMPOSITE key. The identity of an
+            #   object is the PAIR (bucket, key). This both enforces "one row per
+            #   (bucket,key)" and indexes that pair for fast lookups. It is also
+            #   conceptually the SHARD KEY: real S3 partitions the metadata store
+            #   on (bucket, key) to spread keys across many machines.
+            #
+            #   blob_id is just a plain column here -- the pointer into the data
+            #   plane. The objects table has no idea where/how the bytes are
+            #   actually stored; it only holds the id.
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS objects (
+                    bucket        TEXT NOT NULL,
+                    key           TEXT NOT NULL,
+                    blob_id       TEXT NOT NULL,
+                    size          INTEGER NOT NULL,
+                    etag          TEXT NOT NULL,
+                    content_type  TEXT NOT NULL,
+                    last_modified TEXT NOT NULL,
+                    PRIMARY KEY (bucket, key)
+                )
+                """
+            )
 
     def create_bucket(self, name: str) -> bool:
         """Create a bucket. Returns True if newly created, False if it already existed."""
@@ -114,6 +154,53 @@ class Metadata:
         return self._conn.execute(
             "SELECT name, created_at FROM buckets ORDER BY name"
         ).fetchall()
+
+    def bucket_exists(self, name: str) -> bool:
+        # Quick existence check -- used by the front-end to reject writes to a
+        # bucket that was never created. A read, so no lock needed.
+        return self._conn.execute(
+            "SELECT 1 FROM buckets WHERE name = ?", (name,)
+        ).fetchone() is not None
+
+    def put_object(self, rec: ObjectRecord) -> str | None:
+        """Insert or replace an object's index row.
+
+        Returns the OLD blob_id if this write OVERWROTE an existing object, so
+        the caller can garbage-collect the now-orphaned bytes. Returns None if
+        this key is brand new.
+        """
+        # Lock so the read-old-then-upsert pair is atomic (same TOCTOU reasoning
+        # as create_bucket), and wrap it in a transaction (`with self._conn`).
+        with self._lock, self._conn:
+            # First, find out whether this (bucket, key) already has a blob, so we
+            # can tell the caller which old bytes to reclaim after we repoint the row.
+            old = self._conn.execute(
+                "SELECT blob_id FROM objects WHERE bucket = ? AND key = ?",
+                (rec.bucket, rec.key),
+            ).fetchone()
+
+            # Upsert: insert a new row, or if (bucket,key) already exists, UPDATE it.
+            #   ON CONFLICT(bucket, key) DO UPDATE SET ... -> SQLite's "upsert".
+            #   excluded.<col> refers to the value we TRIED to insert, so this line
+            #   overwrites every field with the new write's values.
+            self._conn.execute(
+                """
+                INSERT INTO objects
+                    (bucket, key, blob_id, size, etag, content_type, last_modified)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(bucket, key) DO UPDATE SET
+                    blob_id       = excluded.blob_id,
+                    size          = excluded.size,
+                    etag          = excluded.etag,
+                    content_type  = excluded.content_type,
+                    last_modified = excluded.last_modified
+                """,
+                (rec.bucket, rec.key, rec.blob_id, rec.size,
+                 rec.etag, rec.content_type, rec.last_modified),
+            )
+            # Committing this transaction is THE moment the object "exists" (or
+            # points at its new bytes). Hand back the superseded blob_id, if any.
+            return old["blob_id"] if old else None
 
     @staticmethod
     def now_iso() -> str:
