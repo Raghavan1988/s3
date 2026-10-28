@@ -7,7 +7,10 @@ design decision — **not** to get a finished product quickly.
 `system-design.svg` shows the target architecture for the scope we're building.
 `summary.md` is the running log of what's done and learned so far.
 
-**Current status:** Steps 0–4 complete. Next: Step 5 (PUT object).
+**Current status:** All steps (0–10) complete. The store does the full
+create → PUT → GET/HEAD → LIST → DELETE lifecycle and is verified S3-compatible
+by the real boto3 suite (`tests/test_s3.py`). Remaining work is the out-of-scope
+extensions listed at the bottom.
 
 ---
 
@@ -58,17 +61,17 @@ We tick the box together as we finish each one.
       create and list buckets. *Concept:* the index is the source of truth.
 - [x] **Step 4 — First HTTP surface (`main.py` + bucket XML).** A FastAPI app
       that creates a bucket and lists buckets as S3 XML. *Verify:* `curl`.
-- [ ] **Step 5 — PUT object.** Add the `objects` table and wire both planes.
+- [x] **Step 5 — PUT object.** Add the `objects` table and wire both planes.
       *Concept:* write order — bytes first, index row second, then GC the old
       blob (orphan = harmless garbage; dangling row = corruption). *Verify:* `curl`.
-- [ ] **Step 6 — GET + HEAD object.** Round-trip the bytes and the headers.
-- [ ] **Step 7 — DELETE object + bucket.** Idempotent delete, orphan-blob GC,
+- [x] **Step 6 — GET + HEAD object.** Round-trip the bytes and the headers.
+- [x] **Step 7 — DELETE object + bucket.** Idempotent delete, orphan-blob GC,
       and refusing to delete a non-empty bucket.
-- [ ] **Step 8 — List objects with prefix + delimiter (`xml.py`).** The
+- [x] **Step 8 — List objects with prefix + delimiter (`xml.py`).** The
       "folders are only a view" trick: collapse keys into CommonPrefixes.
-- [ ] **Step 9 — Error model (`errors.py`).** Return `<Error><Code>` XML so the
+- [x] **Step 9 — Error model (`errors.py`).** Return `<Error><Code>` XML so the
       SDKs raise the right typed exception instead of a generic failure.
-- [ ] **Step 10 — Test with boto3 (`tests/`).** Point the real SDK at the running
+- [x] **Step 10 — Test with boto3 (`tests/`).** Point the real SDK at the running
       server and get a green suite. That is our definition of "it works".
 
 ---
