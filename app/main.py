@@ -154,12 +154,14 @@ async def get_object(bucket: str, key: str) -> Response:
     #   step 2: fetch the bytes from the data plane using the pointer we found
     data = blobs.get(rec.blob_id)
 
-    # Return the bytes with the S3-correct headers. Content-Length is set
-    # automatically from the body length; we supply the rest.
+    # Return the bytes with the S3-correct headers. We set Content-Type as an
+    # explicit header rather than via media_type: Starlette appends "; charset=
+    # utf-8" to text/* media_types, but S3 must echo the stored content-type
+    # EXACTLY. Content-Length is still set automatically from the body length.
     return Response(
         content=data,
-        media_type=rec.content_type,                # becomes the Content-Type header
         headers={
+            "Content-Type": rec.content_type,       # exact value we stored, unmodified
             "ETag": f'"{rec.etag}"',                # MD5, quoted
             "Last-Modified": _http_date(rec.last_modified),  # from the STORED time
         },
