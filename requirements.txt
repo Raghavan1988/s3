@@ -1,0 +1,7 @@
+# Runtime
+fastapi==0.162.0
+uvicorn[standard]==0.54.0
+
+# Testing (the real AWS SDK, pointed at our local server)
+boto3==1.43.120
+pytest==9.2.0
