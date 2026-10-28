@@ -17,13 +17,13 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from email.utils import format_datetime   # formats a datetime as an RFC-1123 HTTP date
-from xml.sax.saxutils import escape   # escapes &, <, > so names can't break our XML
 
 from fastapi import FastAPI, Request    # Request lets us read the raw body + headers
 from fastapi.responses import Response  # lets us return raw bodies + custom content-type
 
 from .metadata import Metadata, ObjectRecord
 from .storage import BlobStore
+from .xml import list_all_buckets, list_objects_v2  # S3 XML body builders
 
 # Where the metadata database lives. We default to a `.s3data/` folder next to the
 # project (it's git-ignored). An env var lets us override it, e.g. in tests.
@@ -44,9 +44,6 @@ blobs = BlobStore(DATA_DIR)
 # The FastAPI application object. Uvicorn looks for this (`app.main:app`) to run.
 app = FastAPI(title="local-s3")
 
-# The XML namespace every S3 response document declares. The SDKs check for it.
-S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/"
-
 
 def _http_date(iso: str) -> str:
     # Convert our STORED ISO-8601 timestamp ("2026-10-27T05:22:55.000Z") into the
@@ -57,34 +54,32 @@ def _http_date(iso: str) -> str:
     return format_datetime(dt, usegmt=True)
 
 
-def _list_all_buckets_xml(rows) -> str:
-    # Build the exact <ListAllMyBucketsResult> document the S3 clients expect.
-    # `rows` is the list of sqlite3.Row from meta.list_buckets().
-    #
-    # For each bucket we emit <Bucket><Name>..</Name><CreationDate>..</CreationDate></Bucket>.
-    # escape(...) turns a name like "a&b" into "a&amp;b" so it can't corrupt the XML.
-    bucket_items = "".join(
-        f"<Bucket><Name>{escape(r['name'])}</Name>"
-        f"<CreationDate>{escape(r['created_at'])}</CreationDate></Bucket>"
-        for r in rows
-    )
-    # The Owner block is required by the schema; we use a placeholder identity
-    # since we don't model users/accounts in this build.
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        f'<ListAllMyBucketsResult xmlns="{S3_NS}">'
-        "<Owner><ID>local</ID><DisplayName>local</DisplayName></Owner>"
-        f"<Buckets>{bucket_items}</Buckets>"
-        "</ListAllMyBucketsResult>"
-    )
-
-
 @app.get("/")
 async def list_buckets() -> Response:
     # GET / -> list every bucket. Ask the metadata plane, format as S3 XML.
     # We set media_type so the response carries `Content-Type: application/xml`,
     # which is what S3 clients look for when deciding how to parse the body.
-    body = _list_all_buckets_xml(meta.list_buckets())
+    body = list_all_buckets(meta.list_buckets())
+    return Response(content=body, media_type="application/xml")
+
+
+@app.get("/{bucket}")
+async def list_objects(bucket: str, request: Request) -> Response:
+    # GET /{bucket}?prefix=&delimiter=&max-keys= -> list objects (ListObjectsV2).
+    # Clients also send list-type=2; we don't need to branch on it.
+    if not meta.bucket_exists(bucket):
+        return Response(status_code=404, content="NoSuchBucket")
+
+    # Pull the listing controls out of the query string (with sane defaults).
+    q = request.query_params
+    prefix = q.get("prefix", "")
+    delimiter = q.get("delimiter", "")
+    max_keys = int(q.get("max-keys", "1000"))
+
+    # Division of labor: the metadata plane filters by prefix + sorts by key;
+    # the xml layer applies the delimiter grouping to produce folders.
+    objects = meta.list_objects(bucket, prefix, max_keys)
+    body = list_objects_v2(bucket, prefix, delimiter, max_keys, objects)
     return Response(content=body, media_type="application/xml")
 
 
