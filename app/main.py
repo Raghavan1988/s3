@@ -21,6 +21,8 @@ from email.utils import format_datetime   # formats a datetime as an RFC-1123 HT
 from fastapi import FastAPI, Request    # Request lets us read the raw body + headers
 from fastapi.responses import Response  # lets us return raw bodies + custom content-type
 
+from . import errors                 # S3 error factories (no_such_bucket, ...)
+from .errors import S3Error          # the exception type we register a handler for
 from .metadata import Metadata, ObjectRecord
 from .storage import BlobStore
 from .xml import list_all_buckets, list_objects_v2  # S3 XML body builders
@@ -43,6 +45,9 @@ blobs = BlobStore(DATA_DIR)
 
 # The FastAPI application object. Uvicorn looks for this (`app.main:app`) to run.
 app = FastAPI(title="local-s3")
+
+# Whenever any route raises S3Error, render it as an S3 <Error> XML document.
+app.add_exception_handler(S3Error, errors.s3_exception_handler)
 
 
 def _http_date(iso: str) -> str:
@@ -68,7 +73,7 @@ async def list_objects(bucket: str, request: Request) -> Response:
     # GET /{bucket}?prefix=&delimiter=&max-keys= -> list objects (ListObjectsV2).
     # Clients also send list-type=2; we don't need to branch on it.
     if not meta.bucket_exists(bucket):
-        return Response(status_code=404, content="NoSuchBucket")
+        raise errors.no_such_bucket(bucket)
 
     # Pull the listing controls out of the query string (with sane defaults).
     q = request.query_params
@@ -102,10 +107,9 @@ async def put_object(bucket: str, key: str, request: Request) -> Response:
     # "photos/2024/cat.jpg" is captured whole (not just "photos"). Remember: that
     # slash is NOT a folder -- the whole string is one flat key.
 
-    # Reject writes to a bucket that doesn't exist. (Proper S3 <Error> XML comes
-    # in Step 9; for now a bare 404 is enough to prove the check works.)
+    # Reject writes to a bucket that doesn't exist, with a proper S3 error.
     if not meta.bucket_exists(bucket):
-        return Response(status_code=404, content="NoSuchBucket")
+        raise errors.no_such_bucket(bucket)
 
     # Read the entire request body (the object's bytes) and note its content-type.
     data = await request.body()
@@ -141,9 +145,11 @@ async def get_object(bucket: str, key: str) -> Response:
     #   step 1: metadata lookup
     rec = meta.get_object(bucket, key)
     if rec is None:
-        # Nothing in the index -> the object doesn't exist. We never touch the
-        # data plane. (Proper <Error> XML with NoSuchKey comes in Step 9.)
-        return Response(status_code=404, content="NoSuchKey")
+        # Nothing in the index. Distinguish a missing bucket from a missing key
+        # (S3 returns different codes), and never touch the data plane.
+        if not meta.bucket_exists(bucket):
+            raise errors.no_such_bucket(bucket)
+        raise errors.no_such_key(bucket, key)
 
     #   step 2: fetch the bytes from the data plane using the pointer we found
     data = blobs.get(rec.blob_id)
@@ -200,10 +206,9 @@ async def delete_object(bucket: str, key: str) -> Response:
 async def delete_bucket(bucket: str) -> Response:
     # DELETE /{bucket} -> remove a bucket, but only if it's empty.
     if not meta.bucket_exists(bucket):
-        # (Proper <Error> XML in Step 9; bare status for now.)
-        return Response(status_code=404, content="NoSuchBucket")
+        raise errors.no_such_bucket(bucket)
     if meta.bucket_object_count(bucket) > 0:
         # Guardrail: refuse to delete a bucket that still holds objects.
-        return Response(status_code=409, content="BucketNotEmpty")
+        raise errors.bucket_not_empty(bucket)
     meta.delete_bucket(bucket)
     return Response(status_code=204)
