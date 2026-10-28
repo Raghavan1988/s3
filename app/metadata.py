@@ -31,6 +31,16 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
+def _like_prefix(prefix: str) -> str:
+    # Build a safe SQL LIKE pattern meaning "starts with prefix". In LIKE, '%'
+    # and '_' are wildcards and '\' is our chosen escape char, so we escape any
+    # of those that appear literally in the prefix, then append '%' to match the
+    # rest of the key. (A key like "photos/" has none of these, but a user-chosen
+    # prefix could, so we handle it.)
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
+
+
 @dataclass
 class ObjectRecord:
     # One object's metadata -- everything about it EXCEPT the bytes themselves.
@@ -221,6 +231,26 @@ class Metadata:
             content_type=row["content_type"],
             last_modified=row["last_modified"],
         )
+
+    def list_objects(self, bucket: str, prefix: str, max_keys: int) -> list[ObjectRecord]:
+        """Return up to max_keys objects in a bucket whose key starts with prefix,
+        sorted by key. The delimiter grouping is NOT done here -- that's a pure
+        formatting concern handled in xml.list_objects_v2."""
+        # key LIKE 'prefix%' -> starts-with match. ORDER BY key -> sorted output,
+        # which is what makes delimiter grouping and (later) pagination work.
+        rows = self._conn.execute(
+            r"SELECT * FROM objects WHERE bucket = ? AND key LIKE ? ESCAPE '\' "
+            r"ORDER BY key LIMIT ?",
+            (bucket, _like_prefix(prefix), max_keys),
+        ).fetchall()
+        return [
+            ObjectRecord(
+                bucket=r["bucket"], key=r["key"], blob_id=r["blob_id"], size=r["size"],
+                etag=r["etag"], content_type=r["content_type"],
+                last_modified=r["last_modified"],
+            )
+            for r in rows
+        ]
 
     def delete_object(self, bucket: str, key: str) -> str | None:
         """Delete an object's index row. Returns the now-orphaned blob_id so the
