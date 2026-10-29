@@ -92,12 +92,16 @@ def list_objects_v2(
     # KeyCount = number of <Contents> + number of <CommonPrefixes> returned.
     key_count = len(contents_rows) + len(common_prefixes)
 
+    # Real S3 includes <Delimiter> only when a delimiter was supplied; omit the
+    # element entirely otherwise (rather than emitting an empty one).
+    delimiter_el = f"<Delimiter>{escape(delimiter)}</Delimiter>" if delimiter else ""
+
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         f'<ListBucketResult xmlns="{NS}">'
         f"<Name>{escape(bucket)}</Name>"
         f"<Prefix>{escape(prefix)}</Prefix>"
-        f"<Delimiter>{escape(delimiter)}</Delimiter>"
+        f"{delimiter_el}"
         f"<MaxKeys>{max_keys}</MaxKeys>"
         f"<KeyCount>{key_count}</KeyCount>"
         # MVP: we never truncate yet, so always false. Pagination is a later extension.
