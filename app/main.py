@@ -79,7 +79,13 @@ async def list_objects(bucket: str, request: Request) -> Response:
     q = request.query_params
     prefix = q.get("prefix", "")
     delimiter = q.get("delimiter", "")
-    max_keys = int(q.get("max-keys", "1000"))
+    # Parse max-keys defensively: a non-integer must not 500 the request, and S3
+    # caps a page at 1000, so clamp into [0, 1000].
+    try:
+        max_keys = int(q.get("max-keys", "1000"))
+    except ValueError:
+        max_keys = 1000
+    max_keys = max(0, min(max_keys, 1000))
 
     # Division of labor: the metadata plane filters by prefix + sorts by key;
     # the xml layer applies the delimiter grouping to produce folders.
