@@ -225,3 +225,10 @@ async def delete_bucket(bucket: str) -> Response:
         raise errors.bucket_not_empty(bucket)
     meta.delete_bucket(bucket)
     return Response(status_code=204)
+
+
+@app.head("/{bucket}")
+async def head_bucket(bucket: str) -> Response:
+    # HEAD /{bucket} -> does this bucket exist? (boto3's head_bucket). A pure
+    # metadata-plane check; no body (HEAD), so we answer with the status alone.
+    return Response(status_code=200 if meta.bucket_exists(bucket) else 404)

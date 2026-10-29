@@ -124,6 +124,13 @@ def test_delete_is_idempotent(s3):
         s3.get_object(Bucket="del", Key="tmp")     # typed exception from our <Error>
 
 
+def test_head_bucket(s3):
+    s3.create_bucket(Bucket="hbucket")
+    s3.head_bucket(Bucket="hbucket")               # exists -> no error
+    with pytest.raises(ClientError):
+        s3.head_bucket(Bucket="no-such-bucket")    # missing -> 404
+
+
 def test_get_missing_key_raises_nosuchkey(s3):
     s3.create_bucket(Bucket="err")
     with pytest.raises(s3.exceptions.NoSuchKey):   # proves our <Code> is parsed
