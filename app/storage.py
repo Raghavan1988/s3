@@ -55,7 +55,9 @@ class BlobStore:
         #    for a single-part upload; clients use it to detect corruption. MD5 is
         #    fine here because we only need an integrity checksum, not cryptographic
         #    security.
-        etag = hashlib.md5(data).hexdigest()
+        # usedforsecurity=False documents that this MD5 is an integrity checksum,
+        # not a security hash, and keeps it working on FIPS-restricted builds.
+        etag = hashlib.md5(data, usedforsecurity=False).hexdigest()
 
         # 3) Work out the final resting path for the blob, plus a temporary path we
         #    write to first. Writing straight to `final` would risk a reader seeing a
