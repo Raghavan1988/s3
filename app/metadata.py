@@ -55,6 +55,16 @@ class ObjectRecord:
     last_modified: str    # ISO-8601 timestamp of this write
 
 
+def _row_to_record(row: sqlite3.Row) -> ObjectRecord:
+    # Build an ObjectRecord from a DB row -- defined once so get_object and
+    # list_objects stay in sync if the object columns ever change.
+    return ObjectRecord(
+        bucket=row["bucket"], key=row["key"], blob_id=row["blob_id"],
+        size=row["size"], etag=row["etag"], content_type=row["content_type"],
+        last_modified=row["last_modified"],
+    )
+
+
 class Metadata:
     # The index. One instance wraps one SQLite database file.
 
@@ -230,17 +240,7 @@ class Metadata:
         ).fetchone()
         if row is None:
             return None  # no such object -> caller turns this into a 404
-        # Repackage the DB row into our ObjectRecord dataclass so the rest of the
-        # app works with a typed object, not a raw sqlite row.
-        return ObjectRecord(
-            bucket=row["bucket"],
-            key=row["key"],
-            blob_id=row["blob_id"],
-            size=row["size"],
-            etag=row["etag"],
-            content_type=row["content_type"],
-            last_modified=row["last_modified"],
-        )
+        return _row_to_record(row)
 
     def list_objects(self, bucket: str, prefix: str, max_keys: int) -> list[ObjectRecord]:
         """Return up to max_keys objects in a bucket whose key starts with prefix,
@@ -253,14 +253,7 @@ class Metadata:
             r"ORDER BY key LIMIT ?",
             (bucket, _like_prefix(prefix), max_keys),
         ).fetchall()
-        return [
-            ObjectRecord(
-                bucket=r["bucket"], key=r["key"], blob_id=r["blob_id"], size=r["size"],
-                etag=r["etag"], content_type=r["content_type"],
-                last_modified=r["last_modified"],
-            )
-            for r in rows
-        ]
+        return [_row_to_record(r) for r in rows]
 
     def delete_object(self, bucket: str, key: str) -> str | None:
         """Delete an object's index row. Returns the now-orphaned blob_id so the
