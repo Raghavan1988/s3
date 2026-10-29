@@ -15,6 +15,7 @@ This step serves BUCKETS only: create one, and list them all as S3 XML.
 from __future__ import annotations
 
 import os
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from email.utils import format_datetime   # formats a datetime as an RFC-1123 HTTP date
 
@@ -43,8 +44,16 @@ meta = Metadata(os.path.join(DATA_DIR, "metadata.db"))
 # <DATA_DIR>/blobs/. Both planes are shared by every request.
 blobs = BlobStore(DATA_DIR)
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Startup: nothing to do. Shutdown: close the metadata DB connection cleanly
+    # so SQLite checkpoints the WAL and releases the file handle.
+    yield
+    meta.close()
+
+
 # The FastAPI application object. Uvicorn looks for this (`app.main:app`) to run.
-app = FastAPI(title="local-s3")
+app = FastAPI(title="local-s3", lifespan=lifespan)
 
 # Whenever any route raises S3Error, render it as an S3 <Error> XML document.
 app.add_exception_handler(S3Error, errors.s3_exception_handler)

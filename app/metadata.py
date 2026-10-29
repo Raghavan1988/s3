@@ -292,6 +292,11 @@ class Metadata:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM buckets WHERE name = ?", (name,))
 
+    def close(self) -> None:
+        """Close the SQLite connection. Called on app shutdown so SQLite
+        checkpoints the WAL and releases the file handle cleanly."""
+        self._conn.close()
+
     @staticmethod
     def now_iso() -> str:
         # A small public wrapper so other modules can reuse our timestamp format
