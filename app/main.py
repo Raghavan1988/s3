@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from email.utils import format_datetime   # formats a datetime as an RFC-1123 HTTP date
 
 from fastapi import FastAPI, Request    # Request lets us read the raw body + headers
-from fastapi.responses import Response  # lets us return raw bodies + custom content-type
+from fastapi.responses import FileResponse, Response  # raw bodies, or stream a file
 
 from . import errors                 # S3 error factories (no_such_bucket, ...)
 from .errors import S3Error          # the exception type we register a handler for
@@ -151,17 +151,15 @@ async def get_object(bucket: str, key: str) -> Response:
             raise errors.no_such_bucket(bucket)
         raise errors.no_such_key(bucket, key)
 
-    #   step 2: fetch the bytes from the data plane using the pointer we found
-    data = blobs.get(rec.blob_id)
-
-    # Return the bytes with the S3-correct headers. We set Content-Type as an
-    # explicit header rather than via media_type: Starlette appends "; charset=
-    # utf-8" to text/* media_types, but S3 must echo the stored content-type
-    # EXACTLY. Content-Length is still set automatically from the body length.
-    return Response(
-        content=data,
+    #   step 2: stream the bytes straight from disk instead of reading the whole
+    #   object into memory -- this keeps memory flat even for very large objects.
+    # Content-Type is set as an explicit header (not media_type) so the framework
+    # echoes the stored value EXACTLY, without appending "; charset=utf-8".
+    # FileResponse sets Content-Length from the file size automatically.
+    return FileResponse(
+        path=blobs.path(rec.blob_id),
         headers={
-            "Content-Type": rec.content_type,       # exact value we stored, unmodified
+            "Content-Type": rec.content_type,       # exact stored value, unmodified
             "ETag": f'"{rec.etag}"',                # MD5, quoted
             "Last-Modified": _http_date(rec.last_modified),  # from the STORED time
         },

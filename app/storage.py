@@ -96,6 +96,12 @@ class BlobStore:
         with open(self._path(blob_id), "rb") as f:
             return f.read()
 
+    def path(self, blob_id: str) -> str:
+        """Public path to a blob, so the front-end can stream it straight from
+        disk (via FileResponse) instead of reading it all into memory. The caller
+        must know the blob exists (the metadata plane guarantees that)."""
+        return self._path(blob_id)
+
     def delete(self, blob_id: str) -> None:
         """Reclaim a blob's bytes. Idempotent: deleting a missing blob is a no-op."""
         # Try to remove the file. If it's already gone, swallow the error so that
