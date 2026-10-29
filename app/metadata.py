@@ -55,6 +55,13 @@ class ObjectRecord:
     last_modified: str    # ISO-8601 timestamp of this write
 
 
+# The object columns in a fixed order. Queries select these explicitly (never
+# SELECT *, which silently depends on table definition order) so they always
+# match what _row_to_record expects. It's a constant, not user input, so
+# interpolating it into SQL is safe.
+_OBJECT_COLUMNS = "bucket, key, blob_id, size, etag, content_type, last_modified"
+
+
 def _row_to_record(row: sqlite3.Row) -> ObjectRecord:
     # Build an ObjectRecord from a DB row -- defined once so get_object and
     # list_objects stay in sync if the object columns ever change.
@@ -236,7 +243,8 @@ class Metadata:
         """Look up one object's metadata. Returns the record, or None if absent."""
         # A plain read -- no lock. SELECT * grabs every column for this (bucket,key).
         row = self._conn.execute(
-            "SELECT * FROM objects WHERE bucket = ? AND key = ?", (bucket, key)
+            f"SELECT {_OBJECT_COLUMNS} FROM objects WHERE bucket = ? AND key = ?",
+            (bucket, key),
         ).fetchone()
         if row is None:
             return None  # no such object -> caller turns this into a 404
@@ -249,8 +257,8 @@ class Metadata:
         # key LIKE 'prefix%' -> starts-with match. ORDER BY key -> sorted output,
         # which is what makes delimiter grouping and (later) pagination work.
         rows = self._conn.execute(
-            r"SELECT * FROM objects WHERE bucket = ? AND key LIKE ? ESCAPE '\' "
-            r"ORDER BY key LIMIT ?",
+            f"SELECT {_OBJECT_COLUMNS} FROM objects "
+            r"WHERE bucket = ? AND key LIKE ? ESCAPE '\' ORDER BY key LIMIT ?",
             (bucket, _like_prefix(prefix), max_keys),
         ).fetchall()
         return [_row_to_record(r) for r in rows]
