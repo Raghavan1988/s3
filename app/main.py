@@ -59,6 +59,13 @@ def _http_date(iso: str) -> str:
     return format_datetime(dt, usegmt=True)
 
 
+@app.get("/health")
+async def health() -> Response:
+    # Liveness probe for load balancers / orchestrators. Declared BEFORE the
+    # GET /{bucket} route so "/health" isn't matched as a bucket name.
+    return Response(status_code=200, content="ok", media_type="text/plain")
+
+
 @app.get("/")
 async def list_buckets() -> Response:
     # GET / -> list every bucket. Ask the metadata plane, format as S3 XML.
