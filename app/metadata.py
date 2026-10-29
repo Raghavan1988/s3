@@ -73,6 +73,16 @@ class Metadata:
         # (row["name"], row["created_at"]) -- far more readable and less fragile.
         self._conn.row_factory = sqlite3.Row
 
+        # Performance / concurrency pragmas:
+        #   WAL  -> readers and a writer can proceed concurrently (the default
+        #           rollback journal blocks readers during a write);
+        #   synchronous=NORMAL -> the safe, faster companion to WAL;
+        #   busy_timeout -> a blocked write waits up to 5s instead of failing
+        #           immediately with "database is locked".
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+
         # A mutex. We hold it around WRITES so two threads can't interleave a
         # check-then-insert and both think they created the same bucket. SQLite
         # also locks internally, but this keeps our own logic atomic and simple.
