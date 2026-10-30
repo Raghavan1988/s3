@@ -31,14 +31,25 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
 
-def _like_prefix(prefix: str) -> str:
-    # Build a safe SQL LIKE pattern meaning "starts with prefix". In LIKE, '%'
-    # and '_' are wildcards and '\' is our chosen escape char, so we escape any
-    # of those that appear literally in the prefix, then append '%' to match the
-    # rest of the key. (A key like "photos/" has none of these, but a user-chosen
-    # prefix could, so we handle it.)
-    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-    return escaped + "%"
+def _prefix_upper_bound(prefix: str) -> str | None:
+    # Compute the exclusive UPPER BOUND for a "starts-with prefix" range: the
+    # smallest string greater than every string beginning with `prefix`. We get
+    # it by incrementing the last character's codepoint, e.g. "2024/" -> "20240".
+    # Then "key >= prefix AND key < bound" matches exactly the prefixed keys.
+    #
+    # Why a range instead of LIKE? SQLite can satisfy a range with the
+    # (bucket, key) primary-key index (an indexed scan of just the matching
+    # slice), whereas `key LIKE ? ESCAPE '\'` forces a full scan of the bucket.
+    # It also treats the prefix LITERALLY, so '%' / '_' / '\' need no escaping.
+    #
+    # SQLite's default BINARY collation compares TEXT by UTF-8 bytes, and UTF-8
+    # preserves codepoint order, so incrementing the last codepoint is a correct
+    # bound. If that last codepoint is already the maximum, drop it and carry to
+    # the previous one; an all-maximum prefix has no finite bound (None).
+    for i in range(len(prefix) - 1, -1, -1):
+        if ord(prefix[i]) < 0x10FFFF:
+            return prefix[:i] + chr(ord(prefix[i]) + 1)
+    return None  # empty prefix, or every char is the max codepoint -> no bound
 
 
 @dataclass
@@ -254,13 +265,23 @@ class Metadata:
         """Return up to max_keys objects in a bucket whose key starts with prefix,
         sorted by key. The delimiter grouping is NOT done here -- that's a pure
         formatting concern handled in xml.list_objects_v2."""
-        # key LIKE 'prefix%' -> starts-with match. ORDER BY key -> sorted output,
-        # which is what makes delimiter grouping and (later) pagination work.
-        rows = self._conn.execute(
-            f"SELECT {_OBJECT_COLUMNS} FROM objects "
-            r"WHERE bucket = ? AND key LIKE ? ESCAPE '\' ORDER BY key LIMIT ?",
-            (bucket, _like_prefix(prefix), max_keys),
-        ).fetchall()
+        # Starts-with match as an indexed key range: key >= prefix AND key <
+        # upper bound. ORDER BY key -> sorted output, which is what makes
+        # delimiter grouping and (later) pagination work. An empty prefix (or one
+        # with no finite upper bound) drops the upper condition and lists all keys.
+        upper = _prefix_upper_bound(prefix)
+        if upper is None:
+            rows = self._conn.execute(
+                f"SELECT {_OBJECT_COLUMNS} FROM objects "
+                "WHERE bucket = ? AND key >= ? ORDER BY key LIMIT ?",
+                (bucket, prefix, max_keys),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                f"SELECT {_OBJECT_COLUMNS} FROM objects "
+                "WHERE bucket = ? AND key >= ? AND key < ? ORDER BY key LIMIT ?",
+                (bucket, prefix, upper, max_keys),
+            ).fetchall()
         return [_row_to_record(r) for r in rows]
 
     def delete_object(self, bucket: str, key: str) -> str | None:
