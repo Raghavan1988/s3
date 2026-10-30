@@ -148,7 +148,7 @@ class Metadata:
                 CREATE TABLE IF NOT EXISTS buckets (
                     name        TEXT PRIMARY KEY,
                     created_at  TEXT NOT NULL
-                )
+                ) WITHOUT ROWID
                 """
             )
             # The objects table: one row per stored object.
@@ -173,7 +173,7 @@ class Metadata:
                     content_type  TEXT NOT NULL,
                     last_modified TEXT NOT NULL,
                     PRIMARY KEY (bucket, key)
-                )
+                ) WITHOUT ROWID
                 """
             )
 
