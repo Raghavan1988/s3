@@ -39,6 +39,20 @@ class BlobStore:
         # The leading underscore signals "private; not part of the public API".
         return os.path.join(self._dir, blob_id)
 
+    def _fsync_dir(self) -> None:
+        # fsync the BLOBS DIRECTORY itself. A rename (or unlink) only updates the
+        # directory entry; that update can linger in the OS cache and be lost on a
+        # power failure, leaving the blob "committed" in the file but absent from
+        # the directory. Flushing the directory makes the create/delete durable.
+        # On platforms where a directory can't be fsync'd we simply skip it.
+        fd = os.open(self._dir, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
+
     def put(self, data: bytes) -> tuple[str, str]:
         """Store bytes durably. Returns (blob_id, etag) where etag = MD5 hex.
 
@@ -82,6 +96,10 @@ class BlobStore:
         #    it, the whole blob exists. A concurrent reader never sees a partial file.
         os.replace(tmp, final)
 
+        # 5b) Flush the directory entry so the rename survives a power failure,
+        #     not just the file's own bytes (which fsync above already covered).
+        self._fsync_dir()
+
         # 6) Hand the caller the id (so it can find these bytes later) and the etag
         #    (so it can report it / verify integrity). As a tuple, unpacked like:
         #    blob_id, etag = store.put(data)
@@ -111,4 +129,6 @@ class BlobStore:
         try:
             os.remove(self._path(blob_id))
         except FileNotFoundError:
-            pass  # already absent -> nothing to do
+            return  # already absent -> nothing to do (and nothing to flush)
+        # Flush the directory so the removal is durable, same reasoning as put().
+        self._fsync_dir()
