@@ -12,12 +12,23 @@ output, never in storage.
 """
 from __future__ import annotations
 
+from urllib.parse import quote        # for encoding-type=url key encoding
 from xml.sax.saxutils import escape   # top-level stdlib xml, NOT this app.xml module
 
 from .metadata import ObjectRecord
 
 # The XML namespace every S3 response document declares. The SDKs check for it.
 NS = "http://s3.amazonaws.com/doc/2006-03-01/"
+
+
+def _enc(value: str, encoding_type: str) -> str:
+    # Render a key-ish value for the XML body. With encoding-type=url we first
+    # percent-encode it, which makes keys containing XML-illegal control chars
+    # (and other oddities) safe on the wire; boto3 URL-decodes them back when it
+    # sees <EncodingType>url</EncodingType>. Either way we XML-escape the result.
+    if encoding_type == "url":
+        value = quote(value, safe="")
+    return escape(value)
 
 
 def list_all_buckets(rows) -> str:
@@ -43,11 +54,15 @@ def list_objects_v2(
     delimiter: str,
     max_keys: int,
     objects: list[ObjectRecord],
+    encoding_type: str = "",
 ) -> str:
     """Build a <ListBucketResult> from a sorted list of matching objects.
 
     `objects` is already filtered to this bucket+prefix and sorted by key (the
     metadata plane did that). Here we only apply the DELIMITER grouping.
+
+    `encoding_type` is the client's requested key encoding ("url" or ""); it only
+    affects how key-ish values are rendered, not which ones are returned.
     """
     contents_rows: list[str] = []     # the "files" -> <Contents> entries
     common_prefixes: set[str] = set()  # the "folders" -> <CommonPrefixes>; a set dedupes
@@ -75,7 +90,7 @@ def list_objects_v2(
         # "file" at this level: list it as a normal <Contents> entry.
         contents_rows.append(
             "<Contents>"
-            f"<Key>{escape(key)}</Key>"
+            f"<Key>{_enc(key, encoding_type)}</Key>"
             f"<LastModified>{escape(obj.last_modified)}</LastModified>"
             f'<ETag>"{obj.etag}"</ETag>'          # ETag is wrapped in literal quotes
             f"<Size>{obj.size}</Size>"
@@ -85,7 +100,7 @@ def list_objects_v2(
 
     # Sort the folder names for stable, predictable output.
     cp_rows = "".join(
-        f"<CommonPrefixes><Prefix>{escape(p)}</Prefix></CommonPrefixes>"
+        f"<CommonPrefixes><Prefix>{_enc(p, encoding_type)}</Prefix></CommonPrefixes>"
         for p in sorted(common_prefixes)
     )
 
@@ -94,14 +109,18 @@ def list_objects_v2(
 
     # Real S3 includes <Delimiter> only when a delimiter was supplied; omit the
     # element entirely otherwise (rather than emitting an empty one).
-    delimiter_el = f"<Delimiter>{escape(delimiter)}</Delimiter>" if delimiter else ""
+    delimiter_el = f"<Delimiter>{_enc(delimiter, encoding_type)}</Delimiter>" if delimiter else ""
+
+    # Echo <EncodingType> only when the client asked for one (same rule as S3).
+    encoding_el = f"<EncodingType>{escape(encoding_type)}</EncodingType>" if encoding_type else ""
 
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         f'<ListBucketResult xmlns="{NS}">'
         f"<Name>{escape(bucket)}</Name>"
-        f"<Prefix>{escape(prefix)}</Prefix>"
+        f"<Prefix>{_enc(prefix, encoding_type)}</Prefix>"
         f"{delimiter_el}"
+        f"{encoding_el}"
         f"<MaxKeys>{max_keys}</MaxKeys>"
         f"<KeyCount>{key_count}</KeyCount>"
         # MVP: we never truncate yet, so always false. Pagination is a later extension.

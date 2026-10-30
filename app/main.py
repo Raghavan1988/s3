@@ -132,6 +132,9 @@ async def list_objects(bucket: str, request: Request) -> Response:
     q = request.query_params
     prefix = q.get("prefix", "")
     delimiter = q.get("delimiter", "")
+    # encoding-type=url asks us to URL-encode keys in the response (so keys with
+    # XML-unsafe chars survive); anything else means "don't encode".
+    encoding_type = q.get("encoding-type", "")
     # Parse max-keys defensively (see _parse_max_keys): bad input never 500s, and
     # the page size is clamped into [0, MAX_KEYS].
     max_keys = _parse_max_keys(q.get("max-keys"))
@@ -139,7 +142,7 @@ async def list_objects(bucket: str, request: Request) -> Response:
     # Division of labor: the metadata plane filters by prefix + sorts by key;
     # the xml layer applies the delimiter grouping to produce folders.
     objects = meta.list_objects(bucket, prefix, max_keys)
-    body = list_objects_v2(bucket, prefix, delimiter, max_keys, objects)
+    body = list_objects_v2(bucket, prefix, delimiter, max_keys, objects, encoding_type)
     return Response(content=body, media_type="application/xml")
 
 
