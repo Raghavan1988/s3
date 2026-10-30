@@ -136,20 +136,29 @@ async def put_object(bucket: str, key: str, request: Request) -> Response:
     if not meta.bucket_exists(bucket):
         raise errors.no_such_bucket(bucket)
 
-    # Read the entire request body (the object's bytes) and note its content-type.
-    data = await request.body()
+    # Note the content-type; the bytes are streamed below, not buffered.
     content_type = request.headers.get("content-type", "application/octet-stream")
 
     # ---- THE WRITE ORDER ----------------------------------------------------
-    # 1) DATA PLANE FIRST: store the bytes, get back a blob_id + etag. If we
-    #    crashed after this, these bytes would be an orphan (harmless garbage).
-    blob_id, etag = blobs.put(data)
+    # 1) DATA PLANE FIRST: stream the request body straight to disk, chunk by
+    #    chunk, so even a multi-gigabyte upload never sits whole in memory. The
+    #    writer hashes (ETag) and counts bytes as it goes. If we crashed after
+    #    commit, these bytes would be an orphan (harmless garbage); if the client
+    #    drops mid-upload, we abort and leave nothing behind.
+    writer = blobs.writer()
+    try:
+        async for chunk in request.stream():
+            writer.write(chunk)
+    except Exception:
+        writer.abort()
+        raise
+    blob_id, etag, size = writer.commit()
 
     # 2) METADATA SECOND: commit the index row pointing at the new blob. THIS is
     #    the instant the object officially exists. put_object returns the OLD
     #    blob_id if this was an overwrite.
     rec = ObjectRecord(
-        bucket=bucket, key=key, blob_id=blob_id, size=len(data),
+        bucket=bucket, key=key, blob_id=blob_id, size=size,
         etag=etag, content_type=content_type, last_modified=Metadata.now_iso(),
     )
     old_blob_id = meta.put_object(rec)

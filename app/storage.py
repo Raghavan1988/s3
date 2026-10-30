@@ -53,56 +53,24 @@ class BlobStore:
         finally:
             os.close(fd)
 
+    def writer(self) -> "BlobWriter":
+        """Open a streaming writer for one new blob. The caller feeds bytes with
+        .write(chunk) and finishes with .commit() -> (blob_id, etag, size). This
+        lets the front-end stream a large upload straight to disk, hashing as it
+        goes, without ever holding the whole object in memory."""
+        return BlobWriter(self)
+
     def put(self, data: bytes) -> tuple[str, str]:
         """Store bytes durably. Returns (blob_id, etag) where etag = MD5 hex.
 
-        Write path: temp file -> fsync -> atomic rename. A reader therefore sees
-        either no blob or the whole blob, never a half-written one.
+        A convenience wrapper over the streaming writer for callers that already
+        hold the full bytes (tests, the Python shell). The durability guarantee is
+        the writer's: temp file -> fsync -> atomic rename -> directory fsync, so a
+        reader sees either no blob or the whole blob, never a half-written one.
         """
-        # 1) Mint a fresh, random id for this blob. uuid4() is random (not based on
-        #    time or MAC address); .hex is its 32-char lowercase form with no dashes,
-        #    e.g. "4ec6360d99154cbb9bd982bc6b667111". Practically collision-free, so
-        #    we need no central coordinator to hand out ids.
-        blob_id = uuid.uuid4().hex
-
-        # 2) Compute the ETag = hex MD5 of the exact bytes. This is what S3 returns
-        #    for a single-part upload; clients use it to detect corruption. MD5 is
-        #    fine here because we only need an integrity checksum, not cryptographic
-        #    security.
-        # usedforsecurity=False documents that this MD5 is an integrity checksum,
-        # not a security hash, and keeps it working on FIPS-restricted builds.
-        etag = hashlib.md5(data, usedforsecurity=False).hexdigest()
-
-        # 3) Work out the final resting path for the blob, plus a temporary path we
-        #    write to first. Writing straight to `final` would risk a reader seeing a
-        #    half-written file if we crashed mid-write.
-        final = self._path(blob_id)
-        tmp = final + ".tmp"
-
-        # 4) Write all the bytes into the TEMP file.
-        #    "wb" = write, binary mode (no text encoding, bytes go through as-is).
-        #    The `with` block guarantees the file is closed even if an error happens.
-        with open(tmp, "wb") as f:
-            f.write(data)          # copy the bytes into the OS's file buffer
-            f.flush()              # push them from Python's buffer to the OS
-            os.fsync(f.fileno())   # force the OS to flush its buffer to the physical
-                                   # disk. Without this, bytes can linger in a cache
-                                   # and be lost on a power failure. fileno() is the
-                                   # low-level OS file descriptor fsync needs.
-
-        # 5) Atomically swap the temp file into its final name. On POSIX, os.replace
-        #    is a rename that either fully happens or doesn't -- there is no in-between
-        #    state. THIS is the commit point: before it, the blob doesn't "exist"; after
-        #    it, the whole blob exists. A concurrent reader never sees a partial file.
-        os.replace(tmp, final)
-
-        # 5b) Flush the directory entry so the rename survives a power failure,
-        #     not just the file's own bytes (which fsync above already covered).
-        self._fsync_dir()
-
-        # 6) Hand the caller the id (so it can find these bytes later) and the etag
-        #    (so it can report it / verify integrity). As a tuple, unpacked like:
-        #    blob_id, etag = store.put(data)
+        w = self.writer()
+        w.write(data)
+        blob_id, etag, _size = w.commit()
         return blob_id, etag
 
     def get(self, blob_id: str) -> bytes:
@@ -132,3 +100,63 @@ class BlobStore:
             return  # already absent -> nothing to do (and nothing to flush)
         # Flush the directory so the removal is durable, same reasoning as put().
         self._fsync_dir()
+
+
+class BlobWriter:
+    """A single-use streaming writer for one blob.
+
+    Usage:
+        w = store.writer()
+        for chunk in source:   # or: async for chunk in request.stream()
+            w.write(chunk)
+        blob_id, etag, size = w.commit()
+
+    It writes to a temp file while updating the MD5 (the ETag) and a running byte
+    count incrementally, so nothing is buffered in memory. .commit() fsyncs, does
+    the atomic rename, and flushes the directory -- the same durability path as a
+    whole-buffer put. If the upload fails midway, .abort() removes the temp file.
+    """
+
+    def __init__(self, store: BlobStore):
+        self._store = store
+        self._blob_id = uuid.uuid4().hex         # opaque id for these bytes
+        self._final = store._path(self._blob_id)
+        self._tmp = self._final + ".tmp"
+        # usedforsecurity=False: this MD5 is an integrity checksum (the ETag),
+        # not a security hash; it also keeps working on FIPS-restricted builds.
+        self._md5 = hashlib.md5(usedforsecurity=False)
+        self._size = 0
+        self._f = open(self._tmp, "wb")          # write, binary; bytes pass as-is
+        self._committed = False
+
+    def write(self, chunk: bytes) -> None:
+        # Stream one chunk to disk and fold it into the hash + size as we go.
+        self._f.write(chunk)
+        self._md5.update(chunk)
+        self._size += len(chunk)
+
+    def commit(self) -> tuple[str, str, int]:
+        """Finish the blob durably and return (blob_id, etag, size)."""
+        self._f.flush()                 # push Python's buffer to the OS
+        os.fsync(self._f.fileno())      # force the OS to flush to physical disk
+        self._f.close()
+        # Atomic rename is THE commit point: before it the blob doesn't exist;
+        # after it the whole blob exists. A reader never sees a partial file.
+        os.replace(self._tmp, self._final)
+        # Flush the directory entry so the rename survives a power failure too.
+        self._store._fsync_dir()
+        self._committed = True
+        return self._blob_id, self._md5.hexdigest(), self._size
+
+    def abort(self) -> None:
+        """Discard a half-written blob (e.g. the client connection dropped)."""
+        if self._committed:
+            return
+        try:
+            self._f.close()
+        except OSError:
+            pass
+        try:
+            os.remove(self._tmp)
+        except FileNotFoundError:
+            pass
