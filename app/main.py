@@ -15,6 +15,7 @@ This step serves BUCKETS only: create one, and list them all as S3 XML.
 from __future__ import annotations
 
 import os
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from email.utils import format_datetime   # formats a datetime as an RFC-1123 HTTP date
@@ -60,6 +61,17 @@ app.add_exception_handler(S3Error, errors.s3_exception_handler)
 # Any OTHER uncaught exception becomes an S3 <Error><Code>InternalError</Code>
 # (500) document too, so clients never get an unparseable JSON 500.
 app.add_exception_handler(Exception, errors.unhandled_exception_handler)
+
+
+@app.middleware("http")
+async def add_s3_headers(request: Request, call_next):
+    # Stamp every response (success OR error) with the headers real S3 always
+    # sends: a unique x-amz-request-id clients quote when reporting a problem,
+    # and a Server banner. Done once here instead of in each route.
+    response = await call_next(request)
+    response.headers["x-amz-request-id"] = uuid.uuid4().hex
+    response.headers["Server"] = "local-s3"
+    return response
 
 
 def _http_date(iso: str) -> str:
