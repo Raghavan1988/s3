@@ -96,7 +96,12 @@ def _http_date(iso: str) -> str:
     # HTTP-date format required by the Last-Modified header
     # ("Tue, 27 Oct 2026 05:22:55 GMT"). Crucially we format the object's *stored*
     # time -- NOT datetime.now() -- so repeated GETs report the real write time.
-    dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S.000Z").replace(tzinfo=timezone.utc)
+    try:
+        dt = datetime.strptime(iso, "%Y-%m-%dT%H:%M:%S.000Z").replace(tzinfo=timezone.utc)
+    except ValueError:
+        # A malformed/unexpected stored timestamp shouldn't fail an otherwise-good
+        # GET. Fall back to "now" so Last-Modified is still a valid HTTP date.
+        dt = datetime.now(timezone.utc)
     return format_datetime(dt, usegmt=True)
 
 
