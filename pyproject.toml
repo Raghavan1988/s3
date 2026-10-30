@@ -1,0 +1,10 @@
+# Project-level tool configuration. Right now its only job is to give pytest a
+# stable home so test discovery and imports don't depend on where you invoke it.
+#
+#   testpaths  -> only look under tests/ (faster collection, no stray matches);
+#   pythonpath -> put the repo root on sys.path so tests can `import app...`
+#                 in-process. (tests/conftest.py also does this, belt-and-braces,
+#                 so the suite still runs if this file is absent.)
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
