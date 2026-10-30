@@ -199,11 +199,18 @@ async def get_object(bucket: str, key: str) -> Response:
 
     #   step 2: stream the bytes straight from disk instead of reading the whole
     #   object into memory -- this keeps memory flat even for very large objects.
+    # Guard the metadata-plane invariant "a row always points at a real blob": if
+    # the blob is missing, the index is corrupt, not the request. Fail fast with a
+    # clear InternalError instead of letting FileResponse blow up mid-send.
+    path = blobs.path(rec.blob_id)
+    if not os.path.exists(path):
+        raise errors.internal_error(f"/{bucket}/{key}")
+
     # Content-Type is set as an explicit header (not media_type) so the framework
     # echoes the stored value EXACTLY, without appending "; charset=utf-8".
     # FileResponse sets Content-Length from the file size automatically.
     return FileResponse(
-        path=blobs.path(rec.blob_id),
+        path=path,
         headers={
             "Content-Type": rec.content_type,       # exact stored value, unmodified
             "ETag": f'"{rec.etag}"',                # MD5, quoted
