@@ -74,6 +74,23 @@ async def add_s3_headers(request: Request, call_next):
     return response
 
 
+# S3 serves at most 1000 keys per ListObjectsV2 page, and that's also the default
+# page size when the client doesn't ask for one.
+MAX_KEYS = 1000
+DEFAULT_MAX_KEYS = 1000
+
+
+def _parse_max_keys(raw: str | None) -> int:
+    # Turn the client's max-keys query value into a sane page size. A missing or
+    # non-integer value falls back to the default (never a 500), and the result is
+    # clamped into [0, MAX_KEYS] because S3 caps a page at 1000.
+    try:
+        n = int(raw) if raw is not None else DEFAULT_MAX_KEYS
+    except ValueError:
+        n = DEFAULT_MAX_KEYS
+    return max(0, min(n, MAX_KEYS))
+
+
 def _http_date(iso: str) -> str:
     # Convert our STORED ISO-8601 timestamp ("2026-10-27T05:22:55.000Z") into the
     # HTTP-date format required by the Last-Modified header
@@ -110,13 +127,9 @@ async def list_objects(bucket: str, request: Request) -> Response:
     q = request.query_params
     prefix = q.get("prefix", "")
     delimiter = q.get("delimiter", "")
-    # Parse max-keys defensively: a non-integer must not 500 the request, and S3
-    # caps a page at 1000, so clamp into [0, 1000].
-    try:
-        max_keys = int(q.get("max-keys", "1000"))
-    except ValueError:
-        max_keys = 1000
-    max_keys = max(0, min(max_keys, 1000))
+    # Parse max-keys defensively (see _parse_max_keys): bad input never 500s, and
+    # the page size is clamped into [0, MAX_KEYS].
+    max_keys = _parse_max_keys(q.get("max-keys"))
 
     # Division of labor: the metadata plane filters by prefix + sorts by key;
     # the xml layer applies the delimiter grouping to produce folders.
