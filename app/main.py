@@ -57,6 +57,9 @@ app = FastAPI(title="local-s3", lifespan=lifespan)
 
 # Whenever any route raises S3Error, render it as an S3 <Error> XML document.
 app.add_exception_handler(S3Error, errors.s3_exception_handler)
+# Any OTHER uncaught exception becomes an S3 <Error><Code>InternalError</Code>
+# (500) document too, so clients never get an unparseable JSON 500.
+app.add_exception_handler(Exception, errors.unhandled_exception_handler)
 
 
 def _http_date(iso: str) -> str:

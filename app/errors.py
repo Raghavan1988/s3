@@ -48,6 +48,14 @@ def bucket_not_empty(bucket: str) -> S3Error:
                    "The bucket you tried to delete is not empty.", f"/{bucket}")
 
 
+def internal_error(resource: str = "") -> S3Error:
+    # The catch-all for anything unexpected. Real S3 answers a server-side fault
+    # with <Code>InternalError</Code> and HTTP 500, which the SDKs retry; a bare
+    # JSON 500 (FastAPI's default) would instead surface as an unparseable error.
+    return S3Error("InternalError", 500,
+                   "We encountered an internal error. Please try again.", resource)
+
+
 # --- Rendering ---------------------------------------------------------------
 
 def render_error(err: S3Error) -> Response:
@@ -69,3 +77,10 @@ def render_error(err: S3Error) -> Response:
 async def s3_exception_handler(_request: Request, exc: S3Error) -> Response:
     # FastAPI calls this whenever a route raises S3Error (we register it in main.py).
     return render_error(exc)
+
+
+async def unhandled_exception_handler(request: Request, _exc: Exception) -> Response:
+    # The safety net for any exception that ISN'T an S3Error: render it as an S3
+    # InternalError document (not FastAPI's default JSON 500) so SDK clients still
+    # get a parseable <Error>. Registered for Exception in main.py.
+    return render_error(internal_error(request.url.path))
