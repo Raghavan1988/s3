@@ -111,6 +111,16 @@ class Metadata:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
 
+        # Read-performance tuning (the index is hit on every GET/HEAD/LIST):
+        #   cache_size=-16000 -> ~16 MB of page cache (negative = KiB, not pages),
+        #       so hot index pages stay in memory instead of being re-read;
+        #   temp_store=MEMORY -> build ORDER BY / temp B-trees in RAM, not on disk;
+        #   mmap_size         -> memory-map up to 256 MB of the DB file, avoiding
+        #       a read() syscall + copy per page. None of these weaken durability.
+        self._conn.execute("PRAGMA cache_size=-16000")
+        self._conn.execute("PRAGMA temp_store=MEMORY")
+        self._conn.execute("PRAGMA mmap_size=268435456")
+
         # A mutex. We hold it around WRITES so two threads can't interleave a
         # check-then-insert and both think they created the same bucket. SQLite
         # also locks internally, but this keeps our own logic atomic and simple.
