@@ -48,6 +48,15 @@ def list_all_buckets(rows) -> str:
     )
 
 
+def bucket_location(region: str) -> str:
+    # The <LocationConstraint> document for GetBucketLocation. Real S3 reports the
+    # region a bucket lives in; we have one nominal region for the whole store.
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<LocationConstraint xmlns="{NS}">{escape(region)}</LocationConstraint>'
+    )
+
+
 def list_objects_v2(
     bucket: str,
     prefix: str,
