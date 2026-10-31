@@ -179,29 +179,24 @@ class Metadata:
 
     def create_bucket(self, name: str) -> bool:
         """Create a bucket. Returns True if newly created, False if it already existed."""
-        # Hold the lock so the "does it exist? / insert it" pair is atomic: no
-        # other thread can slip in between the check and the insert.
+        # One atomic upsert instead of SELECT-then-INSERT. ON CONFLICT(name) DO
+        # NOTHING means: insert the row, or if the name already exists leave the
+        # existing row (and its original created_at) untouched. SQLite decides
+        # this inside a single statement, so there is no check-then-insert window
+        # for a second thread to race through -- the row's PRIMARY KEY is the
+        # real guarantee. We still take the lock to keep one writer at a time,
+        # matching the other mutating methods.
+        #   .rowcount is 1 when a row was actually inserted and 0 when the
+        #   conflict suppressed it, which is exactly "did we create it?".
+        # Values go in via placeholders (never string-concatenation), which
+        # prevents SQL-injection and quoting bugs.
         with self._lock, self._conn:
-            # Look for an existing row with this name.
-            #   "SELECT 1 ..."  -> we don't care about column values, just existence.
-            #   WHERE name = ?  -> the ? is a PLACEHOLDER. We pass the value
-            #     separately as a tuple (name,). NEVER build SQL by string-
-            #     concatenation -- placeholders prevent SQL-injection and quoting bugs.
-            #   .fetchone()     -> returns the first row, or None if there are none.
-            exists = self._conn.execute(
-                "SELECT 1 FROM buckets WHERE name = ?", (name,)
-            ).fetchone()
-
-            if exists:
-                return False  # already present -> nothing created
-
-            # Insert the new bucket row with the current UTC timestamp.
-            # Again, values go in via placeholders, matched positionally to the ?s.
-            self._conn.execute(
-                "INSERT INTO buckets (name, created_at) VALUES (?, ?)",
+            cur = self._conn.execute(
+                "INSERT INTO buckets (name, created_at) VALUES (?, ?) "
+                "ON CONFLICT(name) DO NOTHING",
                 (name, _now_iso()),
             )
-            return True  # we created it
+            return cur.rowcount == 1
 
     def list_buckets(self) -> list[sqlite3.Row]:
         """Return all buckets as rows, sorted by name."""
