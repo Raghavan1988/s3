@@ -53,7 +53,11 @@ def s3():
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     try:
-        _wait_until_up(ENDPOINT + "/")
+        # Poll the dedicated /health liveness endpoint -- that's exactly what it
+        # exists for. Waiting on "/" instead would list buckets (a metadata-plane
+        # query) on every poll, so readiness would hinge on more than the server
+        # merely being up.
+        _wait_until_up(ENDPOINT + "/health")
         # The real AWS SDK client, aimed at our server.
         client = boto3.client(
             "s3",
