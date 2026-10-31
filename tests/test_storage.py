@@ -70,3 +70,26 @@ def test_writer_abort_leaves_nothing_behind(store):
     # The blob was never committed, so its id resolves to no file.
     with pytest.raises(FileNotFoundError):
         store.get(w._blob_id)
+
+
+def test_writer_is_single_use(store):
+    # A writer finishes exactly once. Reusing it after commit() -- another write
+    # or a second commit -- must fail clearly, not corrupt the finished blob or
+    # raise an opaque closed-file / missing-temp error.
+    w = store.writer()
+    w.write(b"data")
+    w.commit()
+    with pytest.raises(ValueError):
+        w.write(b"more")        # appending after commit
+    with pytest.raises(ValueError):
+        w.commit()              # committing twice
+
+
+def test_write_after_abort_raises(store):
+    # Same single-use rule on the abort path: once aborted, writing must raise
+    # rather than append to a temp file that's already been deleted.
+    w = store.writer()
+    w.write(b"partial")
+    w.abort()
+    with pytest.raises(ValueError):
+        w.write(b"more")
