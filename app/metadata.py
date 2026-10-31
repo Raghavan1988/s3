@@ -321,6 +321,16 @@ class Metadata:
     def close(self) -> None:
         """Close the SQLite connection. Called on app shutdown so SQLite
         checkpoints the WAL and releases the file handle cleanly."""
+        # PRAGMA optimize before closing lets SQLite refresh the query-planner
+        # statistics it gathered this run (which indexes are worth using for the
+        # prefix-range scans), so the NEXT process starts with good plans instead
+        # of relearning them. It's the maintainers' recommended shutdown call and
+        # is a cheap no-op when there's nothing to update.
+        try:
+            self._conn.execute("PRAGMA optimize")
+        except sqlite3.Error:
+            # A failed optimization must never stop us from releasing the handle.
+            pass
         self._conn.close()
 
     @staticmethod
