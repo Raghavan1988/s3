@@ -5,6 +5,16 @@
 #   pythonpath -> put the repo root on sys.path so tests can `import app...`
 #                 in-process. (tests/conftest.py also does this, belt-and-braces,
 #                 so the suite still runs if this file is absent.)
+#   addopts    -> flags applied to every run, so a plain `pytest` behaves well:
+#       -ra               show a summary of anything not passing (skips, errors);
+#       --strict-markers  an unregistered @pytest.mark typo is an error, not a
+#                         silently-ignored no-op;
+#       --strict-config   a mistake in this config section fails loudly instead
+#                         of being ignored.
+#   xfail_strict -> a test marked xfail that actually PASSES is a failure, so a
+#                 fixed bug can't hide behind a stale xfail.
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+addopts = "-ra --strict-markers --strict-config"
+xfail_strict = true
