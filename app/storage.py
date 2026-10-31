@@ -128,15 +128,26 @@ class BlobWriter:
         self._size = 0
         self._f = open(self._tmp, "wb")          # write, binary; bytes pass as-is
         self._committed = False
+        self._done = False                        # set once commit() or abort() ran
 
     def write(self, chunk: bytes) -> None:
         # Stream one chunk to disk and fold it into the hash + size as we go.
+        # A writer is single-use: once committed or aborted its file is closed,
+        # so writing more would either raise an opaque "I/O on closed file" or
+        # silently corrupt an already-finished blob. Fail with a clear message.
+        if self._done:
+            raise ValueError("write() after the writer was committed or aborted")
         self._f.write(chunk)
         self._md5.update(chunk)
         self._size += len(chunk)
 
     def commit(self) -> tuple[str, str, int]:
         """Finish the blob durably and return (blob_id, etag, size)."""
+        # Guard the single-use contract: committing twice would try to rename a
+        # temp file that was already moved, raising a confusing FileNotFoundError.
+        if self._done:
+            raise ValueError("commit() called on an already-finished writer")
+        self._done = True
         self._f.flush()                 # push Python's buffer to the OS
         os.fsync(self._f.fileno())      # force the OS to flush to physical disk
         self._f.close()
@@ -152,6 +163,9 @@ class BlobWriter:
         """Discard a half-written blob (e.g. the client connection dropped)."""
         if self._committed:
             return
+        # Mark the writer finished first, so any stray write() after this raises
+        # clearly instead of appending to a file we're about to delete.
+        self._done = True
         try:
             self._f.close()
         except OSError:
