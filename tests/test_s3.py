@@ -92,6 +92,29 @@ def test_put_get_roundtrip(s3):
     assert got["ContentLength"] == len(body)
 
 
+def test_empty_object_roundtrips(s3):
+    # A zero-byte object is a real object: it must store, report size 0, and the
+    # MD5 ETag of the empty string. Easy to get wrong if "no body" is mishandled.
+    s3.create_bucket(Bucket="empty")
+    put = s3.put_object(Bucket="empty", Key="zero", Body=b"")
+    assert put["ETag"] == '"d41d8cd98f00b204e9800998ecf8427e"'   # MD5 of b""
+    got = s3.get_object(Bucket="empty", Key="zero")
+    assert got["Body"].read() == b""
+    assert got["ContentLength"] == 0
+
+
+def test_overwrite_replaces_bytes_and_etag(s3):
+    # Re-PUTting the same key must replace the bytes and the ETag -- the metadata
+    # row is repointed at the new blob and the old blob is garbage-collected.
+    s3.create_bucket(Bucket="ow")
+    first = s3.put_object(Bucket="ow", Key="k", Body=b"one")
+    second = s3.put_object(Bucket="ow", Key="k", Body=b"two different")
+    assert first["ETag"] != second["ETag"]            # new content -> new ETag
+    got = s3.get_object(Bucket="ow", Key="k")
+    assert got["Body"].read() == b"two different"     # latest write wins
+    assert got["ContentLength"] == len(b"two different")
+
+
 def test_head_object(s3):
     s3.create_bucket(Bucket="hd")
     s3.put_object(Bucket="hd", Key="f.bin", Body=b"12345")
