@@ -27,6 +27,25 @@ def _keys(meta, bucket, prefix="", max_keys=1000):
     return [r.key for r in meta.list_objects(bucket, prefix, max_keys)]
 
 
+def test_create_bucket_reports_whether_it_was_new(tmp_path):
+    # create_bucket is the one upsert whose return value the front-end could use
+    # to tell "created" from "already yours": True the first time, False after.
+    meta = _meta(tmp_path)
+    assert meta.create_bucket("b") is True      # brand new
+    assert meta.create_bucket("b") is False     # already exists -> not created
+    assert [r["name"] for r in meta.list_buckets()] == ["b"]   # still exactly one
+
+
+def test_recreating_a_bucket_keeps_the_original_created_at(tmp_path):
+    # ON CONFLICT DO NOTHING must leave the existing row untouched, so a repeat
+    # create never rewrites the creation timestamp to "now".
+    meta = _meta(tmp_path)
+    meta.create_bucket("b")
+    first = meta.list_buckets()[0]["created_at"]
+    meta.create_bucket("b")
+    assert meta.list_buckets()[0]["created_at"] == first
+
+
 def test_prefix_range_drilldown(tmp_path):
     meta = _meta(tmp_path)
     meta.create_bucket("g")
