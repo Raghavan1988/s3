@@ -279,19 +279,19 @@ class Metadata:
         # upper bound. ORDER BY key -> sorted output, which is what makes
         # delimiter grouping and (later) pagination work. An empty prefix (or one
         # with no finite upper bound) drops the upper condition and lists all keys.
+        #
+        # Build the one query from parts instead of branching into two nearly
+        # identical SELECTs: the only difference is whether the "key < upper"
+        # bound applies, so we append that clause (and its parameter) only then.
         upper = _prefix_upper_bound(prefix)
-        if upper is None:
-            rows = self._conn.execute(
-                f"SELECT {_OBJECT_COLUMNS} FROM objects "
-                "WHERE bucket = ? AND key >= ? ORDER BY key LIMIT ?",
-                (bucket, prefix, max_keys),
-            ).fetchall()
-        else:
-            rows = self._conn.execute(
-                f"SELECT {_OBJECT_COLUMNS} FROM objects "
-                "WHERE bucket = ? AND key >= ? AND key < ? ORDER BY key LIMIT ?",
-                (bucket, prefix, upper, max_keys),
-            ).fetchall()
+        sql = f"SELECT {_OBJECT_COLUMNS} FROM objects WHERE bucket = ? AND key >= ?"
+        params: list = [bucket, prefix]
+        if upper is not None:
+            sql += " AND key < ?"
+            params.append(upper)
+        sql += " ORDER BY key LIMIT ?"
+        params.append(max_keys)
+        rows = self._conn.execute(sql, params).fetchall()
         return [_row_to_record(r) for r in rows]
 
     def delete_object(self, bucket: str, key: str) -> str | None:
