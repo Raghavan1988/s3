@@ -29,6 +29,13 @@ python -m venv .venv
 ./.venv/bin/uvicorn app.main:app --port 9000
 ```
 
+`requirements.txt` holds only what the server needs at runtime. The test tools
+(boto3, pytest) are in `requirements-dev.txt` — install both to run the suite:
+
+```bash
+./.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+```
+
 The data directory defaults to `./.s3data/` (git-ignored); override it with the
 `S3_DATA_DIR` environment variable.
 

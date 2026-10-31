@@ -1,7 +1,5 @@
-# Runtime
+# Runtime dependencies -- everything the server itself needs to run.
+# Test-only tools (boto3, pytest) live in requirements-dev.txt so a deployment
+# never installs the AWS SDK or a test runner it doesn't use.
 fastapi==0.162.0
 uvicorn[standard]==0.54.0
-
-# Testing (the real AWS SDK, pointed at our local server)
-boto3==1.43.120
-pytest==9.2.0

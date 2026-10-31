@@ -1,0 +1,7 @@
+# Development / test dependencies. Install on top of the runtime ones:
+#   ./.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+#
+# boto3 is the real AWS SDK; the integration suite points it at a throwaway
+# local server to prove we're wire-compatible with S3.
+boto3==1.43.120
+pytest==9.2.0
