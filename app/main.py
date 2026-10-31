@@ -27,7 +27,7 @@ from . import errors                 # S3 error factories (no_such_bucket, ...)
 from .errors import S3Error          # the exception type we register a handler for
 from .metadata import Metadata, ObjectRecord
 from .storage import BlobStore
-from .xml import list_all_buckets, list_objects_v2  # S3 XML body builders
+from .xml import bucket_location, list_all_buckets, list_objects_v2  # S3 XML body builders
 
 # Where the metadata database lives. We default to a `.s3data/` folder next to the
 # project (it's git-ignored). An env var lets us override it, e.g. in tests.
@@ -40,6 +40,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Instantiate the metadata plane once, at import time. A single long-lived index
 # that every request shares. (The data plane gets added here in Step 5.)
 meta = Metadata(os.path.join(DATA_DIR, "metadata.db"))
+
+# The single nominal region this store reports for every bucket (GetBucketLocation).
+REGION = os.environ.get("S3_REGION", "us-east-1")
 
 # Instantiate the data plane too, rooted in the same folder. Blobs land in
 # <DATA_DIR>/blobs/. Both planes are shared by every request.
@@ -128,8 +131,14 @@ async def list_objects(bucket: str, request: Request) -> Response:
     if not meta.bucket_exists(bucket):
         raise errors.no_such_bucket(bucket)
 
-    # Pull the listing controls out of the query string (with sane defaults).
     q = request.query_params
+
+    # GET /{bucket}?location -> GetBucketLocation, not a listing. Handle it before
+    # we interpret the other query params as listing controls.
+    if "location" in q:
+        return Response(content=bucket_location(REGION), media_type="application/xml")
+
+    # Pull the listing controls out of the query string (with sane defaults).
     prefix = q.get("prefix", "")
     delimiter = q.get("delimiter", "")
     # encoding-type=url asks us to URL-encode keys in the response (so keys with
